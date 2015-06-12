@@ -105,6 +105,8 @@ def filter_harnesses(harnesses):
   return filter(lambda harness: (harness[0].__class__ if type(harness) is tuple else harness.__class__) is not WebsockifyServerHarness, harnesses)
 
 class sockets(BrowserCore):
+  emcc_args = []
+
   def test_inet(self):
     src = r'''
       #include <stdio.h>
@@ -155,8 +157,6 @@ class sockets(BrowserCore):
     self.do_run(src, '120.86.52.18\n120.86.52.18\n')
 
   def test_inet4(self):
-    if Settings.USE_TYPED_ARRAYS != 2: return self.skip('requires ta2')
-
     src = r'''
       #include <stdio.h>
       #include <arpa/inet.h>

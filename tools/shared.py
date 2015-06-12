@@ -306,7 +306,7 @@ EM_BUILD_VERBOSE_LEVEL = int(os.getenv('EM_BUILD_VERBOSE')) if os.getenv('EM_BUI
 
 # Expectations
 
-EXPECTED_LLVM_VERSION = (3,5)
+EXPECTED_LLVM_VERSION = (3, 7)
 
 actual_clang_version = None
 
@@ -358,7 +358,7 @@ def check_fastcomp():
       print >> sys.stderr, '==========================================================================='
       print >> sys.stderr, llc_version_info,
       print >> sys.stderr, '==========================================================================='
-      logging.critical('you can fall back to the older (pre-fastcomp) compiler core, although that is not recommended, see https://github.com/kripken/emscripten/wiki/LLVM-Backend')
+      logging.critical('you can fall back to the older (pre-fastcomp) compiler core, although that is not recommended, see http://kripken.github.io/emscripten-site/docs/building_from_source/LLVM-Backend.html')
       return False
 
     d = get_fastcomp_src_dir()
@@ -372,7 +372,7 @@ def check_fastcomp():
         clang_version = llvm_version # This LLVM compiler tree does not have a tools/clang, so it's probably an out-of-source build directory. No need for separate versioning.
       if EMSCRIPTEN_VERSION != llvm_version or EMSCRIPTEN_VERSION != clang_version:
         logging.error('Emscripten, llvm and clang versions do not match, this is dangerous (%s, %s, %s)', EMSCRIPTEN_VERSION, llvm_version, clang_version)
-        logging.error('Make sure to use the same branch in each repo, and to be up-to-date on each. See https://github.com/kripken/emscripten/wiki/LLVM-Backend')
+        logging.error('Make sure to use the same branch in each repo, and to be up-to-date on each. See http://kripken.github.io/emscripten-site/docs/building_from_source/LLVM-Backend.html')
     else:
       logging.warning('did not see a source tree above or next to the LLVM root directory (guessing based on directory of %s), could not verify version numbers match' % LLVM_COMPILER)
     return True
@@ -493,10 +493,9 @@ def check_sanity(force=False):
         logging.critical('Cannot find %s, check the paths in %s' % (cmd, EM_CONFIG))
         sys.exit(1)
 
-    if os.environ.get('EMCC_FAST_COMPILER') != '0':
-      if not fastcomp_ok:
-        logging.critical('failing sanity checks due to previous fastcomp failure')
-        sys.exit(1)
+    if not fastcomp_ok:
+      logging.critical('failing sanity checks due to previous fastcomp failure')
+      sys.exit(1)
 
     try:
       subprocess.call([JAVA, '-version'], stdout=PIPE, stderr=PIPE)
@@ -724,9 +723,7 @@ except:
 
 # Target choice. Must be synced with src/settings.js (TARGET_*)
 def get_llvm_target():
-  if os.environ.get('EMCC_FAST_COMPILER') == '0':
-    return 'unavailable-non-fastcomp'
-  return os.environ.get('EMCC_LLVM_TARGET') or 'asmjs-unknown-emscripten'
+  return 'asmjs-unknown-emscripten'
 LLVM_TARGET = get_llvm_target()
 
 # COMPILER_OPTS: options passed to clang when generating bitcode for us
@@ -740,28 +737,8 @@ COMPILER_OPTS = COMPILER_OPTS + [#'-fno-threadsafe-statics', # disabled due to i
                                  '-D__EMSCRIPTEN_minor__=' + str(EMSCRIPTEN_VERSION_MINOR),
                                  '-D__EMSCRIPTEN_tiny__=' + str(EMSCRIPTEN_VERSION_TINY)]
 
-# COMPILER_STANDARDIZATION_OPTS: Options to correct various predefined macro options.
-COMPILER_STANDARDIZATION_OPTS = []
-
-# When we're not using an appropriate target triple, use -m32 to get i386, which we
-# can mostly make work.
-if LLVM_TARGET != 'asmjs-unknown-emscripten' and LLVM_TARGET != 'le32-unknown-nacl':
-  COMPILER_OPTS += ['-m32']
-  COMPILER_STANDARDIZATION_OPTS += ['-U__i386__', '-U__i386', '-Ui386',
-                                    '-U__SSE__', '-U__SSE_MATH__', '-U__SSE2__', '-U__SSE2_MATH__', '-U__MMX__',
-                                    '-U__APPLE__', '-U__linux__']
-
-# With the asmjs-unknown-emscripten target triple, clang sets up language modes
-# and predefined macros properly. When using the other targets, we have to set things
-# up manually.
-if LLVM_TARGET != 'asmjs-unknown-emscripten':
-  COMPILER_OPTS += ['-fno-math-errno']
-  COMPILER_STANDARDIZATION_OPTS += ['-D__IEEE_LITTLE_ENDIAN']
-  COMPILER_OPTS += ['-DEMSCRIPTEN', '-D__EMSCRIPTEN__', '-fno-math-errno',
-                    '-U__native_client__', '-U__pnacl__', '-U__ELF__']
-
 # Changes to default clang behavior
-if LLVM_TARGET == 'asmjs-unknown-emscripten' or LLVM_TARGET == 'le32-unknown-nacl':
+if LLVM_TARGET == 'asmjs-unknown-emscripten':
   # Implicit functions can cause horribly confusing asm.js function pointer type errors, see #2175
   # If your codebase really needs them - very unrecommended! - you can disable the error with
   #   -Wno-error=implicit-function-declaration
@@ -796,18 +773,11 @@ if USE_EMSDK:
   
   EMSDK_OPTS = C_OPTS + include_directive(C_INCLUDE_PATHS) + include_directive(CXX_INCLUDE_PATHS)
 
-  EMSDK_OPTS += COMPILER_STANDARDIZATION_OPTS
-  # For temporary compatibility, treat 'le32-unknown-nacl' as 'asmjs-unknown-emscripten'.
-  if LLVM_TARGET != 'asmjs-unknown-emscripten' and \
-     LLVM_TARGET != 'le32-unknown-pnacl':
-    EMSDK_CXX_OPTS = ['-nostdinc++'] # asmjs-unknown-emscripten target does not need -nostdinc++
-  else:
-    EMSDK_CXX_OPTS = []
+  EMSDK_CXX_OPTS = []
   COMPILER_OPTS += EMSDK_OPTS
 else:
   EMSDK_OPTS = []
   EMSDK_CXX_OPTS = []
-  COMPILER_OPTS += COMPILER_STANDARDIZATION_OPTS
 
 #print >> sys.stderr, 'SDK opts', ' '.join(EMSDK_OPTS)
 #print >> sys.stderr, 'Compiler opts', ' '.join(COMPILER_OPTS)
@@ -968,13 +938,10 @@ class Settings2(type):
 
     @classmethod
     def apply_opt_level(self, opt_level, noisy=False):
-      if opt_level == 0 and os.environ.get('EMCC_FAST_COMPILER') == '0':
-        self.attrs['ASM_JS'] = 0 # non-fastcomp has asm off in -O1
       if opt_level >= 1:
         self.attrs['ASM_JS'] = 1
         self.attrs['ASSERTIONS'] = 0
         self.attrs['DISABLE_EXCEPTION_CATCHING'] = 1
-        self.attrs['RELOOP'] = 1
         self.attrs['ALIASING_FUNCTION_POINTERS'] = 1
 
     def __getattr__(self, attr):
@@ -1045,6 +1012,7 @@ class Building:
     env['PKG_CONFIG_PATH'] = os.environ.get ('EM_PKG_CONFIG_PATH') or ''
     env['EMSCRIPTEN'] = path_from_root()
     env['PATH'] = path_from_root('system', 'bin') + os.pathsep + env['PATH']
+    env['CROSS_COMPILE'] = path_from_root('em') # produces /path/to/emscripten/em , which then can have 'cc', 'ar', etc appended to it
     return env
 
   # Finds the given executable 'program' in PATH. Operates like the Unix tool 'which'.
@@ -1451,7 +1419,7 @@ class Building:
     #opts += ['-debug-pass=Arguments']
     if get_clang_version() >= '3.4':
       if not Settings.SIMD:
-        opts += ['-disable-vectorize']
+        opts += ['-disable-loop-vectorization', '-disable-slp-vectorization', '-vectorize-loops=false', '-vectorize-slp=false', '-vectorize-slp-aggressive=false']
       else:
         opts += ['-bb-vectorize-vector-bits=128', '-force-vector-width=4']
 
@@ -1549,8 +1517,6 @@ class Building:
     os.environ['EMSCRIPTEN_SUPPRESS_USAGE_WARNING'] = '1'
 
     # Run Emscripten
-    if not os.path.exists(Settings.RELOOPER):
-      Settings.RELOOPER = Cache.get_path('relooper.js')
     settings = Settings.serialize()
     args = settings + extra_args
     if WINDOWS:
@@ -1572,11 +1538,7 @@ class Building:
 
   @staticmethod
   def can_build_standalone():
-    return not Settings.BUILD_AS_SHARED_LIB and not Settings.LINKABLE and not Settings.EXPORT_ALL
-
-  @staticmethod
-  def can_use_unsafe_opts():
-    return Settings.USE_TYPED_ARRAYS == 2
+    return not Settings.BUILD_AS_SHARED_LIB and not Settings.LINKABLE and not Settings.EXPORT_ALL and not Settings.MAIN_MODULE and not Settings.SIDE_MODULE
 
   @staticmethod
   def can_inline():
@@ -1603,98 +1565,17 @@ class Building:
         llvm-as < /dev/null | opt -std-compile-opts -disable-output -debug-pass=Arguments
     '''
     assert 0 <= optimization_level <= 3
-    unsafe = Building.can_use_unsafe_opts()
     opts = []
     if optimization_level > 0:
-      if unsafe:
-        if not Building.can_inline():
-          opts.append('-disable-inlining')
-        if not Building.can_build_standalone():
-          # -O1 does not have -gobaldce, which removes stuff that is needed for libraries and linkables
-          optimization_level = min(1, optimization_level)
-        opts.append('-O%d' % optimization_level)
-        #print '[unsafe: %s]' % ','.join(opts)
-      else:
-        allow_nonportable = False
-        optimize_size = True
-        use_aa = False
-
-        # PassManagerBuilder::populateModulePassManager
-        if allow_nonportable and use_aa: # ammo.js results indicate this can be nonportable
-          opts.append('-tbaa')
-          opts.append('-basicaa') # makes fannkuch slow but primes fast
-
-        if Building.can_build_standalone():
-          opts += Building.get_safe_internalize()
-
-        opts.append('-globalopt')
-        opts.append('-ipsccp')
-        opts.append('-deadargelim')
-        if allow_nonportable: opts.append('-instcombine')
-        opts.append('-simplifycfg')
-
-        opts.append('-prune-eh')
-        if Building.can_inline(): opts.append('-inline')
-        opts.append('-functionattrs')
-        if optimization_level > 2:
-          opts.append('-argpromotion')
-
-        # XXX Danger: Can turn a memcpy into something that violates the
-        #             load-store consistency hypothesis. See hashnum() in Lua.
-        #             Note: this opt is of great importance for raytrace...
-        if allow_nonportable: opts.append('-scalarrepl')
-
-        if allow_nonportable: opts.append('-early-cse') # ?
-        opts.append('-simplify-libcalls')
-        opts.append('-jump-threading')
-        if allow_nonportable: opts.append('-correlated-propagation') # ?
-        opts.append('-simplifycfg')
-        if allow_nonportable: opts.append('-instcombine')
-
-        opts.append('-tailcallelim')
-        opts.append('-simplifycfg')
-        opts.append('-reassociate')
-        opts.append('-loop-rotate')
-        opts.append('-licm')
-        opts.append('-loop-unswitch') # XXX should depend on optimize_size
-        if allow_nonportable: opts.append('-instcombine')
-        if Settings.QUANTUM_SIZE == 4: opts.append('-indvars') # XXX this infinite-loops raytrace on q1 (loop in |new node_t[count]| has 68 hardcoded &not fixed)
-        if allow_nonportable: opts.append('-loop-idiom') # ?
-        opts.append('-loop-deletion')
-        opts.append('-loop-unroll')
-
-        ##### not in llvm-3.0. but have |      #addExtensionsToPM(EP_LoopOptimizerEnd, MPM);| if allow_nonportable: opts.append('-instcombine')
-
-        # XXX Danger: Messes up Lua output for unknown reasons
-        #             Note: this opt is of minor importance for raytrace...
-        if optimization_level > 1 and allow_nonportable: opts.append('-gvn')
-
-        opts.append('-memcpyopt') # Danger?
-        opts.append('-sccp')
-
-        if allow_nonportable: opts.append('-instcombine')
-        opts.append('-jump-threading')
-        opts.append('-correlated-propagation')
-        opts.append('-dse')
-        #addExtensionsToPM(EP_ScalarOptimizerLate, MPM)
-
-        opts.append('-adce')
-        opts.append('-simplifycfg')
-        if allow_nonportable: opts.append('-instcombine')
-
-        opts.append('-strip-dead-prototypes')
-
-        if Building.can_build_standalone():
-          opts.append('-globaldce')
-
-        if optimization_level > 1: opts.append('-constmerge')
-
+      if not Building.can_inline():
+        opts.append('-disable-inlining')
+      opts.append('-O%d' % optimization_level)
     Building.LLVM_OPT_OPTS = opts
     return opts
 
   @staticmethod
-  def js_optimizer(filename, passes, jcache=False, debug=False, extra_info=None, output_filename=None, just_split=False, just_concat=False):
-    ret = js_optimizer.run(filename, passes, NODE_JS, jcache, debug, extra_info, just_split, just_concat)
+  def js_optimizer(filename, passes, debug=False, extra_info=None, output_filename=None, just_split=False, just_concat=False):
+    ret = js_optimizer.run(filename, passes, NODE_JS, debug, extra_info, just_split, just_concat)
     if output_filename:
       safe_move(ret, output_filename)
       ret = output_filename
@@ -1761,63 +1642,6 @@ class Building:
 
     return False
 
-  # Make sure the relooper exists. If it does not, check out the relooper code and bootstrap it
-  @staticmethod
-  def ensure_relooper(relooper):
-    if os.path.exists(relooper): return
-    if os.environ.get('EMCC_FAST_COMPILER') != '0':
-      logging.debug('not building relooper to js, using it in c++ backend')
-      return
-
-    Cache.ensure()
-    curr = os.getcwd()
-    try:
-      ok = False
-      logging.info('=======================================')
-      logging.info('bootstrapping relooper...')
-      os.chdir(path_from_root('src'))
-
-      emcc_debug = os.environ.get('EMCC_DEBUG')
-      if emcc_debug: del os.environ['EMCC_DEBUG']
-
-      emcc_leave_inputs_raw = os.environ.get('EMCC_LEAVE_INPUTS_RAW')
-      if emcc_leave_inputs_raw: del os.environ['EMCC_LEAVE_INPUTS_RAW']
-
-      def make(opt_level, reloop):
-        raw = relooper + '.raw.js'
-        Building.emcc(os.path.join('relooper', 'Relooper.cpp'), ['-I' + os.path.join('relooper'), '--post-js',
-          os.path.join('relooper', 'emscripten', 'glue.js'),
-          '--memory-init-file', '0', '-s', 'RELOOP=%d' % reloop,
-          '-s', 'EXPORTED_FUNCTIONS=["_rl_set_output_buffer","_rl_make_output_buffer","_rl_new_block","_rl_delete_block","_rl_block_add_branch_to","_rl_new_relooper","_rl_delete_relooper","_rl_relooper_add_block","_rl_relooper_calculate","_rl_relooper_render", "_rl_set_asm_js_mode"]',
-          '-s', 'DEFAULT_LIBRARY_FUNCS_TO_INCLUDE=["memcpy", "memset", "malloc", "free", "puts"]',
-          '-s', 'RELOOPER="' + relooper + '"',
-          '-O' + str(opt_level), '--closure', '0'], raw)
-        f = open(relooper, 'w')
-        f.write("// Relooper, (C) 2012 Alon Zakai, MIT license, https://github.com/kripken/Relooper\n")
-        f.write("var Relooper = (function(Module) {\n")
-        f.write(open(raw).read())
-        f.write('\n  return Module.Relooper;\n')
-        f.write('})(RelooperModule);\n')
-        f.close()
-
-      # bootstrap phase 1: generate unrelooped relooper, for which we do not need a relooper (so we cannot recurse infinitely in this function)
-      logging.info('  bootstrap phase 1')
-      make(2, 0)
-      # bootstrap phase 2: generate relooped relooper, using the unrelooped relooper (we see relooper.js exists so we cannot recurse infinitely in this function)
-      logging.info('  bootstrap phase 2')
-      make(2, 1)
-      logging.info('bootstrapping relooper succeeded')
-      logging.info('=======================================')
-      ok = True
-    finally:
-      os.chdir(curr)
-      if emcc_debug: os.environ['EMCC_DEBUG'] = emcc_debug
-      if emcc_leave_inputs_raw: os.environ['EMCC_LEAVE_INPUTS_RAW'] = emcc_leave_inputs_raw
-      if not ok:
-        logging.error('bootstrapping relooper failed. You may need to manually create relooper.js by compiling it, see src/relooper/emscripten')
-        try_delete(relooper) # do not leave a phase-1 version if phase 2 broke
-        1/0
-  
   @staticmethod
   def ensure_struct_info(info_path):
     if os.path.exists(info_path): return
@@ -1828,7 +1652,6 @@ class Building:
   
 # compatibility with existing emcc, etc. scripts
 Cache = cache.Cache(debug=DEBUG_CACHE)
-JCache = cache.JCache(Cache)
 chunkify = cache.chunkify
 
 def reconfigure_cache():
@@ -1887,17 +1710,15 @@ class JS:
     ret = '''function%s(%s) {
   %sModule["dynCall_%s"](%s);
 }''' % ((' extCall_' + sig) if named else '', args, 'return ' if sig[0] != 'v' else '', sig, args)
+    return ret
 
-    if Settings.DLOPEN_SUPPORT and Settings.ASSERTIONS:
-      # guard against cross-module stack leaks
-      ret = ret.replace(') {\n', ''') {
-  try {
-    var preStack = asm.stackSave();
-''').replace(';\n}', ''';
-  } finally {
-    assert(asm.stackSave() == preStack);
-  }
-}''')
+  @staticmethod
+  def make_jscall(sig, named=True):
+    fnargs = ','.join(['a' + str(i) for i in range(1, len(sig))])
+    args = 'index' + (',' if fnargs else '') + fnargs
+    ret = '''function%s(%s) {
+    %sRuntime.functionPointers[index](%s);
+}''' % ((' jsCall_' + sig) if named else '', args, 'return ' if sig[0] != 'v' else '', fnargs)
     return ret
 
   @staticmethod
@@ -1913,16 +1734,6 @@ class JS:
     asm["setThrew"](1, 0);
   }
 }''' % ((' invoke_' + sig) if named else '', args, 'return ' if sig[0] != 'v' else '', sig, args)
-
-    if Settings.DLOPEN_SUPPORT and Settings.ASSERTIONS:
-      # guard against cross-module stack leaks
-      ret = ret.replace('  try {', '''  var preStack = asm.stackSave();
-  try {
-''').replace('  }\n}', '''  } finally {
-    assert(asm.stackSave() == preStack);
-  }
-}''')
-
     return ret
 
   @staticmethod
@@ -2061,8 +1872,8 @@ def safe_move(src, dst):
   dst = os.path.abspath(dst)
   if os.path.isdir(dst):
     dst = os.path.join(dst, os.path.basename(src))
-  if src == dst:
-    return
+  if src == dst: return
+  if dst == '/dev/null': return
   shutil.move(src, dst)
 
 def safe_copy(src, dst):
@@ -2070,8 +1881,8 @@ def safe_copy(src, dst):
   dst = os.path.abspath(dst)
   if os.path.isdir(dst):
     dst = os.path.join(dst, os.path.basename(src))
-  if src == dst:
-    return
+  if src == dst: return
+  if dst == '/dev/null': return
   shutil.copyfile(src, dst)
 
 import js_optimizer

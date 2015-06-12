@@ -26,11 +26,13 @@ Available operations and tasks:
 
   build libc
         libcxx
+        libcxx_noexcept
         libcxxabi
         gl
         struct_info
         native_optimizer
         zlib
+        libpng
         sdl2
         sdl2-image
 
@@ -77,7 +79,15 @@ if operation == 'build':
           std::cout << "hello";
           return 0;
         }
-      ''', ['libcxx.bc'])
+      ''', ['libcxx.a'])
+    elif what == 'libcxx_noexcept':
+      build('''
+        #include <iostream>
+        int main() {
+          std::cout << "hello";
+          return 0;
+        }
+      ''', ['libcxx_noexcept.a'], ['-s', 'DISABLE_EXCEPTION_CATCHING=1'])
     elif what == 'libcxxabi':
       build('''
         struct X { int x; virtual void a() {} };
@@ -107,6 +117,10 @@ if operation == 'build':
       build('''
         int main() {}
       ''', [os.path.join('ports-builds', 'zlib', 'libz.a')], ['-s', 'USE_ZLIB=1'])
+    elif what == 'libpng':
+      build('''
+        int main() {}
+      ''', [os.path.join('ports-builds', 'libpng', 'libpng.bc')], ['-s', 'USE_ZLIB=1', '-s', 'USE_LIBPNG=1'])
     elif what == 'sdl2':
       build('''
         int main() {}

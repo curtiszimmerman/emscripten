@@ -9,25 +9,17 @@ if (memoryInitializer) {
   }
   if (ENVIRONMENT_IS_NODE || ENVIRONMENT_IS_SHELL) {
     var data = Module['readBinary'](memoryInitializer);
-#if USE_TYPED_ARRAYS == 2
     HEAPU8.set(data, STATIC_BASE);
-#else
-    allocate(data, 'i8', ALLOC_NONE, STATIC_BASE);
-#endif
   } else {
     addRunDependency('memory initializer');
-    function applyMemoryInitializer(data) {
+    var applyMemoryInitializer = function(data) {
       if (data.byteLength) data = new Uint8Array(data);
-#if USE_TYPED_ARRAYS == 2
 #if ASSERTIONS
       for (var i = 0; i < data.length; i++) {
         assert(HEAPU8[STATIC_BASE + i] === 0, "area for memory initializer should not have been touched before it's loaded");
       }
 #endif
       HEAPU8.set(data, STATIC_BASE);
-#else
-      allocate(data, 'i8', ALLOC_NONE, STATIC_BASE);
-#endif
       removeRunDependency('memory initializer');
     }
     var request = Module['memoryInitializerRequest'];
@@ -112,7 +104,7 @@ Module['callMain'] = Module.callMain = function callMain(args) {
 #endif
 
     // if we're not running an evented main loop, it's time to exit
-    exit(ret);
+    exit(ret, /* implicit = */ true);
   }
   catch(e) {
     if (e instanceof ExitStatus) {
@@ -186,22 +178,27 @@ function run(args) {
 }
 Module['run'] = Module.run = run;
 
-function exit(status) {
-  if (Module['noExitRuntime']) {
+function exit(status, implicit) {
+  if (implicit && Module['noExitRuntime']) {
 #if ASSERTIONS
-    Module.printErr('exit(' + status + ') called, but noExitRuntime, so not exiting (you can use emscripten_force_exit, if you want to force a true shutdown)');
+    Module.printErr('exit(' + status + ') implicitly called by end of main(), but noExitRuntime, so not exiting the runtime (you can use emscripten_force_exit, if you want to force a true shutdown)');
 #endif
     return;
   }
 
-  ABORT = true;
-  EXITSTATUS = status;
-  STACKTOP = initialStackTop;
+  if (Module['noExitRuntime']) {
+#if ASSERTIONS
+    Module.printErr('exit(' + status + ') called, but noExitRuntime, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)');
+#endif
+  } else {
+    ABORT = true;
+    EXITSTATUS = status;
+    STACKTOP = initialStackTop;
 
-  // exit the runtime
-  exitRuntime();
+    exitRuntime();
 
-  if (Module['onExit']) Module['onExit'](status);
+    if (Module['onExit']) Module['onExit'](status);
+  }
 
 #if NODE_STDOUT_FLUSH_WORKAROUND
   if (ENVIRONMENT_IS_NODE) {
@@ -249,9 +246,11 @@ function abort(what) {
 #endif
 
   var output = 'abort(' + what + ') at ' + stackTrace() + extra;
-  abortDecorators.forEach(function(decorator) {
-    output = decorator(output, what);
-  });
+  if (abortDecorators) {
+    abortDecorators.forEach(function(decorator) {
+      output = decorator(output, what);
+    });
+  }
   throw output;
 }
 Module['abort'] = Module.abort = abort;

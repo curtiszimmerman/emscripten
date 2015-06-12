@@ -14,6 +14,10 @@ Current trunk code
     - Emscripten-LLVM: https://github.com/kripken/emscripten-fastcomp/compare/1.29.12...incoming
     - Emscripten-Clang: https://github.com/kripken/emscripten-fastcomp-clang/compare/1.29.12...incoming
 
+v1.32.4: 5/15/2015
+-------------------
+ - Update LLVM and clang to PNaCl's current 3.7 merge point (April 17 2015)
+
 v1.29.12: 3/15/2015
 -------------------
  - Fix a bug where SDL_malloc and SDL_free were not available. (#3247)
@@ -910,7 +914,7 @@ v1.12.2: 2/25/2014
 
 v1.12.1: 2/25/2014
 ------------------
- - TURNED ON FASTCOMP BY DEFAULT. This means that you will need to migrate to fastcomp-clang build. Either use an Emscripten SDK distribution, or to build manually, see https://github.com/kripken/emscripten/wiki/LLVM-Backend for info.
+ - TURNED ON FASTCOMP BY DEFAULT. This means that you will need to migrate to fastcomp-clang build. Either use an Emscripten SDK distribution, or to build manually, see http://kripken.github.io/emscripten-site/docs/building_from_source/LLVM-Backend.html for info.
  - Migrate to requiring Clang 3.3 instead of Clang 3.2. The fastcomp-clang repository by Emscripten is based on Clang 3.3.
  - Deprecated old Emscripten libgc implementation.
  - asm.js will now be always enabled, even in -O0 builds in fastcomp.

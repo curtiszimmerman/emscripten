@@ -868,6 +868,35 @@ LibraryManager.library = {
     return -1;
   },
   pathconf: 'fpathconf',
+#if EMTERPRETIFY_ASYNC
+  fsync__deps: ['$FS', '__setErrNo', '$ERRNO_CODES', '$EmterpreterAsync'],
+  fsync: function(fildes) {
+    return EmterpreterAsync.handle(function(resume) {
+      // int fsync(int fildes);
+      // http://pubs.opengroup.org/onlinepubs/000095399/functions/fsync.html
+      var stream = FS.getStream(fildes);
+      if (stream) {
+        var mount = stream.node.mount;
+        if (!mount.type.syncfs) {
+          // We write directly to the file system, so there's nothing to do here.
+          resume(function() { return 0 });
+          return;
+        }
+        mount.type.syncfs(mount, false, function(err) {
+          if (err) {
+            ___setErrNo(ERRNO_CODES.EIO);
+            resume(function() { return -1 });
+            return;
+          }
+          resume(function() { return 0 });
+        });
+      } else {
+        ___setErrNo(ERRNO_CODES.EBADF);
+        resume(function() { return -1 });
+      }
+    });
+  },
+#else
   fsync__deps: ['$FS', '__setErrNo', '$ERRNO_CODES'],
   fsync: function(fildes) {
     // int fsync(int fildes);
@@ -881,6 +910,7 @@ LibraryManager.library = {
       return -1;
     }
   },
+#endif // EMTERPRETIFY_ASYNC
   fdatasync: 'fsync',
   truncate__deps: ['$FS', '__setErrNo', '$ERRNO_CODES'],
   truncate: function(path, length) {
@@ -924,12 +954,6 @@ LibraryManager.library = {
       writeAsciiToMemory(cwd, buf);
       return buf;
     }
-  },
-  getwd__deps: ['getcwd'],
-  getwd: function(path_name) {
-    // char *getwd(char *path_name);
-    // http://pubs.opengroup.org/onlinepubs/000095399/functions/getwd.html
-    return _getcwd(path_name, 4096);  // PATH_MAX.
   },
   isatty__deps: ['$FS', '__setErrNo', '$ERRNO_CODES'],
   isatty: function(fildes) {
@@ -1014,11 +1038,6 @@ LibraryManager.library = {
     }
     try {
       var slab = {{{ makeGetSlabs('buf', 'i8', true) }}};
-#if SAFE_HEAP
-#if USE_TYPED_ARRAYS == 0
-      SAFE_HEAP_FILL_HISTORY(buf, buf+nbyte, 'i8'); // VFS does not use makeSetValues, so we need to do it manually
-#endif
-#endif
       return FS.read(stream, slab, buf, nbyte, offset);
     } catch (e) {
       FS.handleFSError(e);
@@ -1043,11 +1062,6 @@ LibraryManager.library = {
 
     try {
       var slab = {{{ makeGetSlabs('buf', 'i8', true) }}};
-#if SAFE_HEAP
-#if USE_TYPED_ARRAYS == 0
-      SAFE_HEAP_FILL_HISTORY(buf, buf+nbyte, 'i8'); // VFS does not use makeSetValues, so we need to do it manually
-#endif
-#endif
       return FS.read(stream, slab, buf, nbyte);
     } catch (e) {
       FS.handleFSError(e);
@@ -1149,11 +1163,6 @@ LibraryManager.library = {
     }
     try {
       var slab = {{{ makeGetSlabs('buf', 'i8', true) }}};
-#if SAFE_HEAP
-#if USE_TYPED_ARRAYS == 0
-      SAFE_HEAP_FILL_HISTORY(buf, buf+nbyte, 'i8'); // VFS does not use makeSetValues, so we need to do it manually
-#endif
-#endif
       return FS.write(stream, slab, buf, nbyte, offset);
     } catch (e) {
       FS.handleFSError(e);
@@ -1178,11 +1187,6 @@ LibraryManager.library = {
 
     try {
       var slab = {{{ makeGetSlabs('buf', 'i8', true) }}};
-#if SAFE_HEAP
-#if USE_TYPED_ARRAYS == 0
-      SAFE_HEAP_FILL_HISTORY(buf, buf+nbyte, 'i8'); // VFS does not use makeSetValues, so we need to do it manually
-#endif
-#endif
       return FS.write(stream, slab, buf, nbyte);
     } catch (e) {
       FS.handleFSError(e);
@@ -1506,6 +1510,7 @@ LibraryManager.library = {
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/sysconf.html
     switch(name) {
       case {{{ cDefine('_SC_PAGE_SIZE') }}}: return PAGE_SIZE;
+      case {{{ cDefine('_SC_PHYS_PAGES') }}}: return totalMemory / PAGE_SIZE;
       case {{{ cDefine('_SC_ADVISORY_INFO') }}}:
       case {{{ cDefine('_SC_BARRIERS') }}}:
       case {{{ cDefine('_SC_ASYNCHRONOUS_IO') }}}:
@@ -1709,6 +1714,7 @@ LibraryManager.library = {
     mainLoop:
     for (var formatIndex = 0; formatIndex < format.length;) {
       if (format[formatIndex] === '%' && format[formatIndex+1] == 'n') {
+        argIndex = Runtime.prepVararg(argIndex, '*');
         var argPtr = {{{ makeGetValue('varargs', 'argIndex', 'void*') }}};
         argIndex += Runtime.getAlignSize('void*', null, true);
         {{{ makeSetValue('argPtr', 0, 'soFar', 'i32') }}};
@@ -1726,6 +1732,7 @@ LibraryManager.library = {
             if (maxx != sub) maxx = 0;
           }
           if (maxx) {
+            argIndex = Runtime.prepVararg(argIndex, '*');
             var argPtr = {{{ makeGetValue('varargs', 'argIndex', 'void*') }}};
             argIndex += Runtime.getAlignSize('void*', null, true);
             fields++;
@@ -1757,6 +1764,7 @@ LibraryManager.library = {
             scanList = scanList.replace(middleDashMatch[1] + '-' + middleDashMatch[2], expanded);
           }
 
+          argIndex = Runtime.prepVararg(argIndex, '*');
           var argPtr = {{{ makeGetValue('varargs', 'argIndex', 'void*') }}};
           argIndex += Runtime.getAlignSize('void*', null, true);
           fields++;
@@ -1885,6 +1893,7 @@ LibraryManager.library = {
         if (suppressAssignment) continue;
 
         var text = buffer.join('');
+        argIndex = Runtime.prepVararg(argIndex, '*');
         var argPtr = {{{ makeGetValue('varargs', 'argIndex', 'void*') }}};
         argIndex += Runtime.getAlignSize('void*', null, true);
         var base = 10;
@@ -1958,12 +1967,11 @@ LibraryManager.library = {
     stream.eof = false;
     stream.error = false;
   },
-  fclose__deps: ['close', 'fsync', 'fileno'],
+  fclose__deps: ['close', 'fileno'],
   fclose: function(stream) {
     // int fclose(FILE *stream);
     // http://pubs.opengroup.org/onlinepubs/000095399/functions/fclose.html
     var fd = _fileno(stream);
-    _fsync(fd);
     return _close(fd);
   },
   fdopen__deps: ['$FS', '__setErrNo', '$ERRNO_CODES'],
@@ -2497,16 +2505,6 @@ LibraryManager.library = {
     Runtime.stackRestore(stack);
   },
 
-#if TARGET_X86
-  // va_arg is just like our varargs
-  vfprintf: 'fprintf',
-  vprintf: 'printf',
-  vdprintf: 'dprintf',
-  vscanf: 'scanf',
-  vfscanf: 'fscanf',
-#endif
-
-#if TARGET_ASMJS_UNKNOWN_EMSCRIPTEN
   // convert va_arg into varargs
   vfprintf__deps: ['fprintf'],
   vfprintf: function(s, f, va_arg) {
@@ -2528,7 +2526,6 @@ LibraryManager.library = {
   vfscanf: function(s, format, va_arg) {
     return _fscanf(s, format, {{{ makeGetValue('va_arg', 0, '*') }}});
   },
-#endif
 
   // ==========================================================================
   // sys/mman.h
@@ -2564,16 +2561,24 @@ LibraryManager.library = {
       }
     }
 
-    _mmap.mappings[ptr] = { malloc: ptr, num: num, allocated: allocated };
+    _mmap.mappings[ptr] = { malloc: ptr, num: num, allocated: allocated, fd: fd, flags: flags };
     return ptr;
   },
 
+  munmap__deps: ['msync'],
   munmap: function(start, num) {
     if (!_mmap.mappings) _mmap.mappings = {};
     // TODO: support unmmap'ing parts of allocations
     var info = _mmap.mappings[start];
     if (!info) return 0;
     if (num == info.num) {
+      // At the Linux man page, it says:
+      // "The file may not actually be updated until msync(2) or munmap(2) are called."
+      // I guess that means we need to call msync when doing munmap
+      _msync(start, num); // todo: which flags?
+
+      FS.munmap(FS.getStream(info.fd));
+
       _mmap.mappings[start] = null;
       if (info.allocated) {
         _free(info.malloc);
@@ -2594,7 +2599,14 @@ LibraryManager.library = {
   msync: function(addr, len, flags) {
     // int msync(void *addr, size_t len, int flags);
     // http://pubs.opengroup.org/onlinepubs/009696799/functions/msync.html
-    // Pretend to succeed
+    // TODO: support sync'ing parts of allocations
+    var info = _mmap.mappings[addr];
+    if (!info) return 0;
+    if (len == info.num) {
+      var buffer = new Uint8Array(HEAPU8.buffer, addr, len);
+      return FS.msync(FS.getStream(info.fd), buffer, 0, len, info.flags);
+    }
+
     return 0;
   },
 
@@ -2632,17 +2644,11 @@ LibraryManager.library = {
 
   abs: 'Math_abs',
   labs: 'Math_abs',
-#if USE_TYPED_ARRAYS == 2
   llabs__deps: [function() { Types.preciseI64MathUsed = 1 }],
   llabs: function(lo, hi) {
     i64Math.abs(lo, hi);
     {{{ makeStructuralReturn([makeGetTempDouble(0, 'i32'), makeGetTempDouble(1, 'i32')]) }}};
   },
-#else
-  llabs: function(lo, hi) {
-    throw 'unsupported llabs';
-  },
-#endif
 
   exit__deps: ['_exit'],
   exit: function(status) {
@@ -2753,15 +2759,12 @@ LibraryManager.library = {
       ___setErrNo(ERRNO_CODES.ERANGE);
     }
 
-#if USE_TYPED_ARRAYS == 2
     if (bits == 64) {
       {{{ makeStructuralReturn(splitI64('ret')) }}};
     }
-#endif
 
     return ret;
   },
-#if USE_TYPED_ARRAYS == 2
   _parseInt64__deps: ['isspace', '__setErrNo', '$ERRNO_CODES', function() { Types.preciseI64MathUsed = 1 }],
   _parseInt64: function(str, endptr, base, min, max, unsign) {
     var isNegative = false;
@@ -2832,7 +2835,6 @@ LibraryManager.library = {
 
     {{{ makeStructuralReturn([makeGetTempDouble(0, 'i32'), makeGetTempDouble(1, 'i32')]) }}};
   },
-#endif
   environ__deps: ['$ENV'],
   environ: 'allocate(1, "i32*", ALLOC_STATIC)',
   __environ__deps: ['environ'],
@@ -3017,11 +3019,6 @@ LibraryManager.library = {
 
   memcpy__inline: function(dest, src, num, align) {
     var ret = '';
-#if ASSERTIONS
-#if ASM_JS == 0
-    ret += "assert(" + num + " % 1 === 0);"; //, 'memcpy given ' + " + num + " + ' bytes to copy. Problem with quantum=1 corrections perhaps?');";
-#endif
-#endif
     ret += makeCopyValues(dest, src, num, 'null', null, align);
     return ret;
   },
@@ -3035,20 +3032,9 @@ LibraryManager.library = {
   memcpy__sig: 'iiii',
   memcpy__deps: ['emscripten_memcpy_big'],
   memcpy: function(dest, src, num) {
-#if USE_TYPED_ARRAYS == 0
-    {{{ makeCopyValues('dest', 'src', 'num', 'null') }}};
-    return num;
-#endif
-#if USE_TYPED_ARRAYS == 1
-    {{{ makeCopyValues('dest', 'src', 'num', 'null') }}};
-    return num;
-#endif
-
     dest = dest|0; src = src|0; num = num|0;
     var ret = 0;
-#if USE_TYPED_ARRAYS
     if ((num|0) >= 4096) return _emscripten_memcpy_big(dest|0, src|0, num|0)|0;
-#endif
     ret = dest|0;
     if ((dest&3) == (src&3)) {
       while (dest & 3) {
@@ -3113,7 +3099,6 @@ LibraryManager.library = {
   memset__sig: 'iiii',
   memset__asm: true,
   memset: function(ptr, value, num) {
-#if USE_TYPED_ARRAYS == 2
     ptr = ptr|0; value = value|0; num = num|0;
     var stop = 0, value4 = 0, stop4 = 0, unaligned = 0;
     stop = (ptr + num)|0;
@@ -3140,10 +3125,6 @@ LibraryManager.library = {
       ptr = (ptr+1)|0;
     }
     return (ptr-num)|0;
-#else
-    {{{ makeSetValues('ptr', '0', 'value', 'null', 'num') }}};
-    return ptr;
-#endif
   },
   llvm_memset_i32: 'memset',
   llvm_memset_p0i8_i32: 'memset',
@@ -3320,13 +3301,8 @@ LibraryManager.library = {
 
   llvm_va_start__inline: function(ptr) {
     // varargs - we received a pointer to the varargs as a final 'extra' parameter called 'varrp'
-#if TARGET_X86
-    return makeSetValue(ptr, 0, 'varrp', 'void*');
-#endif
-#if TARGET_ASMJS_UNKNOWN_EMSCRIPTEN
     // 2-word structure: struct { void* start; void* currentOffset; }
     return makeSetValue(ptr, 0, 'varrp', 'void*') + ';' + makeSetValue(ptr, Runtime.QUANTUM_SIZE, 0, 'void*');
-#endif
   },
 
   llvm_va_end: function() {},
@@ -3357,22 +3333,19 @@ LibraryManager.library = {
   llvm_bswap_i64: function(l, h) {
     var retl = _llvm_bswap_i32(h)>>>0;
     var reth = _llvm_bswap_i32(l)>>>0;
-#if USE_TYPED_ARRAYS == 2
     {{{ makeStructuralReturn(['retl', 'reth']) }}};
-#else
-    throw 'unsupported';
-#endif
   },
 
   llvm_ctlz_i64__asm: true,
   llvm_ctlz_i64__sig: 'iii',
-  llvm_ctlz_i64: function(l, h) {
+  llvm_ctlz_i64: function(l, h, isZeroUndef) {
     l = l | 0;
     h = h | 0;
+    isZeroUndef = isZeroUndef | 0;
     var ret = 0;
     ret = Math_clz32(h) | 0;
     if ((ret | 0) == 32) ret = ret + (Math_clz32(l) | 0) | 0;
-    tempRet0 = 0;
+    {{{ makeSetTempRet0('0') }}};
     return ret | 0;
   },
 
@@ -3385,6 +3358,7 @@ LibraryManager.library = {
       }
       return 8;
     }
+    if (SIDE_MODULE) return ''; // uses it from the parent
     return 'var cttz_i8 = allocate([' + range(256).map(function(x) { return cttz(x) }).join(',') + '], "i8", ALLOC_STATIC);';
   }],
   llvm_cttz_i32__asm: true,
@@ -3405,11 +3379,7 @@ LibraryManager.library = {
   llvm_cttz_i64: function(l, h) {
     var ret = _llvm_cttz_i32(l);
     if (ret == 32) ret += _llvm_cttz_i32(h);
-#if USE_TYPED_ARRAYS == 2
     {{{ makeStructuralReturn(['ret', '0']) }}};
-#else
-    return ret;
-#endif
   },
 
   llvm_ctpop_i32: function(x) {
@@ -3450,12 +3420,6 @@ LibraryManager.library = {
   },
   __cxa_guard_release: function() {},
   __cxa_guard_abort: function() {},
-
-#if USE_TYPED_ARRAYS != 2
-  _ZTVN10__cxxabiv119__pointer_type_infoE: [0], // is a pointer
-  _ZTVN10__cxxabiv117__class_type_infoE: [1], // no inherited classes
-  _ZTVN10__cxxabiv120__si_class_type_infoE: [2], // yes inherited classes
-#endif
 
   $EXCEPTIONS: {
     last: 0,
@@ -3539,20 +3503,6 @@ LibraryManager.library = {
   __cxa_throw__sig: 'viii',
   __cxa_throw__deps: ['_ZSt18uncaught_exceptionv', '__cxa_find_matching_catch', '$EXCEPTIONS'],
   __cxa_throw: function(ptr, type, destructor) {
-#if USE_TYPED_ARRAYS != 2
-    if (!___cxa_throw.initialized) {
-      try {
-        {{{ makeSetValue(makeGlobalUse('__ZTVN10__cxxabiv119__pointer_type_infoE'), '0', '0', 'i32') }}}; // Workaround for libcxxabi integration bug
-      } catch(e){}
-      try {
-        {{{ makeSetValue(makeGlobalUse('__ZTVN10__cxxabiv117__class_type_infoE'), '0', '1', 'i32') }}}; // Workaround for libcxxabi integration bug
-      } catch(e){}
-      try {
-        {{{ makeSetValue(makeGlobalUse('__ZTVN10__cxxabiv120__si_class_type_infoE'), '0', '2', 'i32') }}}; // Workaround for libcxxabi integration bug
-      } catch(e){}
-      ___cxa_throw.initialized = true;
-    }
-#endif
 #if EXCEPTION_DEBUG
     Module.printErr('Compiled code throwing an exception, ' + [ptr,type,destructor]);
 #endif
@@ -3621,11 +3571,7 @@ LibraryManager.library = {
       return;
     }
     // Clear state flag.
-#if ASM_JS
     asm['setThrew'](0);
-#else
-    __THREW__ = 0;
-#endif
     // Call destructor if one is registered then clear it.
     var ptr = EXCEPTIONS.caught.pop();
 #if EXCEPTION_DEBUG
@@ -3782,7 +3728,7 @@ LibraryManager.library = {
     Runtime.warnOnce('no overflow support in llvm_umul_with_overflow_i64');
 #endif
     var low = ___muldi3(xl, xh, yl, yh);
-    {{{ makeStructuralReturn(['low', 'tempRet0', '0']) }}};
+    {{{ makeStructuralReturn(['low', makeGetTempRet0(), '0']) }}};
   },
 
   llvm_stacksave: function() {
@@ -3883,7 +3829,7 @@ LibraryManager.library = {
     var l = {{{ makeGetValue('ptr', 0, 'i32') }}};
     var h = {{{ makeGetValue('ptr', 4, 'i32') }}};
     {{{ makeSetValue('ptr', 0, '_llvm_uadd_with_overflow_i64(l, h, vall, valh)', 'i32') }}};
-    {{{ makeSetValue('ptr', 4, 'tempRet0', 'i32') }}};
+    {{{ makeSetValue('ptr', 4, makeGetTempRet0(), 'i32') }}};
     {{{ makeStructuralReturn(['l', 'h']) }}};
   },
 
@@ -3892,7 +3838,7 @@ LibraryManager.library = {
     var l = {{{ makeGetValue('ptr', 0, 'i32') }}};
     var h = {{{ makeGetValue('ptr', 4, 'i32') }}};
     {{{ makeSetValue('ptr', 0, '_i64Subtract(l, h, vall, valh)', 'i32') }}};
-    {{{ makeSetValue('ptr', 4, 'tempRet0', 'i32') }}};
+    {{{ makeSetValue('ptr', 4, makeGetTempRet0(), 'i32') }}};
     {{{ makeStructuralReturn(['l', 'h']) }}};
   },
 
@@ -4048,6 +3994,7 @@ LibraryManager.library = {
   fabs: 'Math_abs',
   fabsf: 'Math_abs',
   fabsl: 'Math_abs',
+  llvm_fabs_f32: 'Math_abs',
   llvm_fabs_f64: 'Math_abs',
   ceil: 'Math_ceil',
   ceilf: 'Math_ceil',
@@ -4118,51 +4065,6 @@ LibraryManager.library = {
   // ==========================================================================
 
   $DLFCN: {
-#if DLOPEN_SUPPORT
-    // extra asm.js dlopen support
-    functionTable: [], // will contain objects mapping sigs to js functions that call into the right asm module with the right index
-
-    registerFunctions: function(asm, num, sigs, jsModule) {
-      // use asm module dynCall_* from functionTable
-      if (num % 2 == 1) num++; // keep pointers even
-      var table = DLFCN.functionTable;
-      var from = table.length;
-      assert(from % 2 == 0);
-      for (var i = 0; i < num; i++) {
-        table[from + i] = {};
-        sigs.forEach(function(sig) { // TODO: new Function etc.
-          var full = 'dynCall_' + sig;
-          table[from + i][sig] = function dynCall_sig() {
-            arguments[0] -= from;
-            return asm[full].apply(null, arguments);
-          }
-        });
-      }
-
-      if (jsModule.cleanups) {
-        var newLength = table.length;
-        jsModule.cleanups.push(function() {
-          if (table.length === newLength) {
-            table.length = from; // nothing added since, just shrink
-          } else {
-            // something was added above us, clear and leak the span
-            for (var i = 0; i < num; i++) {
-              table[from + i] = null;
-            }
-          }
-          while (table.length > 0 && table[table.length-1] === null) table.pop();
-        });
-      }
-
-      // patch js module dynCall_* to use functionTable
-      sigs.forEach(function(sig) {
-        jsModule['dynCall_' + sig] = function dynCall_sig() {
-          return table[arguments[0]][sig].apply(null, arguments);
-        };
-      });
-    },
-#endif
-
     error: null,
     errorMsg: null,
     loadedLibs: {}, // handle -> [refcount, name, lib_object]
@@ -4175,12 +4077,6 @@ LibraryManager.library = {
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/dlopen.html
     filename = filename === 0 ? '__self__' : (ENV['LD_LIBRARY_PATH'] || '/') + Pointer_stringify(filename);
 
-#if ASM_JS
-#if DLOPEN_SUPPORT == 0
-    abort('need to build with DLOPEN_SUPPORT=1 to get dlopen support in asm.js');
-#endif
-#endif
-
     if (DLFCN.loadedLibNames[filename]) {
       // Already loaded; increment ref count and return.
       var handle = DLFCN.loadedLibNames[filename];
@@ -4191,7 +4087,7 @@ LibraryManager.library = {
     if (filename === '__self__') {
       var handle = -1;
       var lib_module = Module;
-      var cached_functions = SYMBOL_TABLE;
+      var cached_functions = {};
     } else {
       var target = FS.findObject(filename);
       if (!target || target.isFolder || target.isDevice) {
@@ -4204,11 +4100,7 @@ LibraryManager.library = {
 
       try {
         var lib_module = eval(lib_data)(
-#if ASM_JS
-          DLFCN.functionTable.length,
-#else
-          {{{ Functions.getTable('x') }}}.length,
-#endif
+          Runtime.alignFunctionTables(),
           Module
         );
       } catch (e) {
@@ -4271,35 +4163,28 @@ LibraryManager.library = {
   dlsym: function(handle, symbol) {
     // void *dlsym(void *restrict handle, const char *restrict name);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/dlsym.html
-    symbol = '_' + Pointer_stringify(symbol);
+    symbol = Pointer_stringify(symbol);
 
     if (!DLFCN.loadedLibs[handle]) {
       DLFCN.errorMsg = 'Tried to dlsym() from an unopened handle: ' + handle;
       return 0;
     } else {
       var lib = DLFCN.loadedLibs[handle];
-      // self-dlopen means that lib.module is not a superset of
-      // cached_functions, so check the latter first
+      symbol = '_' + symbol;
       if (lib.cached_functions.hasOwnProperty(symbol)) {
         return lib.cached_functions[symbol];
+      }
+      if (!lib.module.hasOwnProperty(symbol)) {
+        DLFCN.errorMsg = ('Tried to lookup unknown symbol "' + symbol +
+                               '" in dynamic lib: ' + lib.name);
+        return 0;
       } else {
-        if (!lib.module.hasOwnProperty(symbol)) {
-          DLFCN.errorMsg = ('Tried to lookup unknown symbol "' + symbol +
-                                 '" in dynamic lib: ' + lib.name);
-          return 0;
-        } else {
-          var result = lib.module[symbol];
-          if (typeof result == 'function') {
-#if ASM_JS
-            result = lib.module.SYMBOL_TABLE[symbol];
-            assert(result);
-#else
-            result = Runtime.addFunction(result);
-#endif
-            lib.cached_functions = result;
-          }
-          return result;
+        var result = lib.module[symbol];
+        if (typeof result == 'function') {
+          result = Runtime.addFunction(result);
+          lib.cached_functions = result;
         }
+        return result;
       }
     }
   },
@@ -5336,7 +5221,7 @@ LibraryManager.library = {
         {{{ makeSetValueAsm('table', '(i<<3)+4', 'label', 'i32') }}};
         // prepare next slot
         {{{ makeSetValueAsm('table', '(i<<3)+8', '0', 'i32') }}};
-        tempRet0 = size;
+        {{{ makeSetTempRet0('size') }}};
         return table | 0;
       }
       i = i+1|0;
@@ -5345,7 +5230,7 @@ LibraryManager.library = {
     size = (size*2)|0;
     table = _realloc(table|0, 8*(size+1|0)|0) | 0;
     table = _saveSetjmp(env|0, label|0, table|0, size|0) | 0;
-    tempRet0 = size;
+    {{{ makeSetTempRet0('size') }}};
     return table | 0;
   },
 
@@ -5367,28 +5252,16 @@ LibraryManager.library = {
     return 0;
   },
 
-#if ASM_JS
   setjmp__deps: ['saveSetjmp', 'testSetjmp'],
-#endif
   setjmp__inline: function(env) {
     // Save the label
-#if ASM_JS
     return '_saveSetjmp(' + env + ', label, setjmpTable)|0';
-#else
-    return '(tempInt = setjmpId++, mySetjmpIds[tempInt] = 1, setjmpLabels[tempInt] = label,' + makeSetValue(env, '0', 'tempInt', 'i32', undefined, undefined, undefined, undefined,  ',') + ', 0)';
-#endif
   },
 
-#if ASM_JS
   longjmp__deps: ['saveSetjmp', 'testSetjmp'],
-#endif
   longjmp: function(env, value) {
-#if ASM_JS
     asm['setThrew'](env, value || 1);
     throw 'longjmp';
-#else
-    throw { longjmp: true, id: {{{ makeGetValue('env', '0', 'i32') }}}, value: value || 1 };
-#endif
   },
   emscripten_longjmp__deps: ['longjmp'],
   emscripten_longjmp: function(env, value) {
@@ -6059,7 +5932,7 @@ LibraryManager.library = {
   },
 
   pthread_cleanup_push: function(routine, arg) {
-    __ATEXIT__.push({ func: function() { Runtime.dynCall('vi', routine, [arg]) } })
+    __ATEXIT__.push(function() { Runtime.dynCall('vi', routine, [arg]) })
     _pthread_cleanup_push.level = __ATEXIT__.length;
   },
 
@@ -7872,40 +7745,6 @@ LibraryManager.library = {
     return Math.random();
   },
 
-  emscripten_jcache_printf___deps: ['_formatString'],
-  emscripten_jcache_printf_: function(varargs) {
-    var MAX = 10240;
-    if (!_emscripten_jcache_printf_.buffer) {
-      _emscripten_jcache_printf_.buffer = _malloc(MAX);
-    }
-    var i = 0;
-    do {
-      var curr = {{{ makeGetValue('varargs', '0', 'i8') }}};
-      varargs += {{{ STACK_ALIGN }}};
-      {{{ makeSetValue('_emscripten_jcache_printf_.buffer', 'i', 'curr', 'i8') }}};
-      i++;
-      assert(i*{{{ STACK_ALIGN }}} < MAX);
-    } while (curr != 0);
-    Module.print(intArrayToString(__formatString(_emscripten_jcache_printf_.buffer, varargs)).replace('\\n', ''));
-    Runtime.stackAlloc(-4*i); // free up the stack space we know is ok to free
-  },
-
-  emscripten_asm_const: function(code) {
-    Runtime.getAsmConst(code, 0)();
-  },
-
-  emscripten_asm_const_int__jsargs: true,
-  emscripten_asm_const_int: function(code) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    return Runtime.getAsmConst(code, args.length).apply(null, args) | 0;
-  },
-
-  emscripten_asm_const_double__jsargs: true,
-  emscripten_asm_const_double: function(code) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    return +Runtime.getAsmConst(code, args.length).apply(null, args);
-  },
-
   emscripten_get_now: function() {
     if (!_emscripten_get_now.actual) {
       if (ENVIRONMENT_IS_NODE) {
@@ -8144,32 +7983,6 @@ LibraryManager.library = {
     return cache[fullname] = allocate(intArrayFromString(ret + ''), 'i8', ALLOC_NORMAL);
   },
 
-#if RUNNING_FASTCOMP == 0
-#if ASM_JS
-#if ALLOW_MEMORY_GROWTH
-  emscripten_replace_memory__asm: true, // this is used inside the asm module
-  emscripten_replace_memory__sig: 'viiiiiiii', // bogus
-  emscripten_replace_memory: function(newBuffer) {
-    if ((byteLength(newBuffer) & 0xffff) || byteLength(newBuffer) < 0xffff) return false;
-    HEAP8 = new Int8View(newBuffer);
-    HEAP16 = new Int16View(newBuffer);
-    HEAP32 = new Int32View(newBuffer);
-    HEAPU8 = new Uint8View(newBuffer);
-    HEAPU16 = new Uint16View(newBuffer);
-    HEAPU32 = new Uint32View(newBuffer);
-    HEAPF32 = new Float32View(newBuffer);
-    HEAPF64 = new Float64View(newBuffer);
-    buffer = newBuffer;
-    return true;
-  },
-  // this function is inside the asm block, but prevents validation as asm.js
-  // the codebase still benefits from being in the general asm.js shape,
-  // but should not declare itself as validating (which is prevented in ASM_JS == 2).
-  {{{ (assert(ASM_JS === 2), DEFAULT_LIBRARY_FUNCS_TO_INCLUDE.push('emscripten_replace_memory'), '') }}}
-#endif
-#endif
-#endif
-
   emscripten_debugger: function() {
     debugger;
   },
@@ -8225,10 +8038,10 @@ LibraryManager.library = {
     var ander = 0;
     if ((bits|0) < 32) {
       ander = ((1 << bits) - 1)|0;
-      tempRet0 = (high << bits) | ((low&(ander << (32 - bits))) >>> (32 - bits));
+      {{{ makeSetTempRet0('(high << bits) | ((low&(ander << (32 - bits))) >>> (32 - bits))') }}};
       return low << bits;
     }
-    tempRet0 = low << (bits - 32);
+    {{{ makeSetTempRet0('low << (bits - 32)') }}};
     return 0;
   },
   bitshift64Ashr__asm: true,
@@ -8238,10 +8051,10 @@ LibraryManager.library = {
     var ander = 0;
     if ((bits|0) < 32) {
       ander = ((1 << bits) - 1)|0;
-      tempRet0 = high >> bits;
+      {{{ makeSetTempRet0('high >> bits') }}};
       return (low >>> bits) | ((high&ander) << (32 - bits));
     }
-    tempRet0 = (high|0) < 0 ? -1 : 0;
+    {{{ makeSetTempRet0('(high|0) < 0 ? -1 : 0') }}};
     return (high >> (bits - 32))|0;
   },
   bitshift64Lshr__asm: true,
@@ -8251,10 +8064,10 @@ LibraryManager.library = {
     var ander = 0;
     if ((bits|0) < 32) {
       ander = ((1 << bits) - 1)|0;
-      tempRet0 = high >>> bits;
+      {{{ makeSetTempRet0('high >>> bits') }}};
       return (low >>> bits) | ((high&ander) << (32 - bits));
     }
-    tempRet0 = 0;
+    {{{ makeSetTempRet0('0') }}};
     return (high >>> (bits - 32))|0;
   },
 
@@ -8294,6 +8107,9 @@ LibraryManager.library = {
   BItoD: true,
   llvm_dbg_value: true,
   llvm_ctlz_i32: true,
+  emscripten_asm_const: true,
+  emscripten_asm_const_int: true,
+  emscripten_asm_const_double: true,
 };
 
 function autoAddDeps(object, name) {

@@ -1,5 +1,5 @@
 mergeInto(LibraryManager.library, {
-  $SOCKFS__postset: '__ATINIT__.push({ func: function() { SOCKFS.root = FS.mount(SOCKFS, {}, null); } });',
+  $SOCKFS__postset: '__ATINIT__.push(function() { SOCKFS.root = FS.mount(SOCKFS, {}, null); });',
   $SOCKFS__deps: ['$FS', 'mkport'],
   $SOCKFS: {
     mount: function(mount) {
@@ -104,13 +104,7 @@ mergeInto(LibraryManager.library, {
           // socket is closed
           return 0;
         }
-#if USE_TYPED_ARRAYS == 2
         buffer.set(msg.buffer, offset);
-#else
-        for (var i = 0; i < size; i++) {
-          buffer[offset + i] = msg.buffer[i];
-        }
-#endif
         return msg.buffer.length;
       },
       write: function(stream, buffer, offset, length, position /* ignored */) {
